@@ -39,3 +39,5 @@ firebase-debug.log*
 *.zip
 
 /dist
+src/config.ts
+src/dropthread-firebase-adminsdk-9twsp-10e251ff3d.json
