@@ -49,7 +49,7 @@ export const validateItem = (item: ItemData) => {
    && item.fit !== ""
    && item.condition !== ""
    && item.images.length > 0
-   && item.price > 0
+   && item.minPrice >= 0
    && item.styles.length <= 10
    && item.country !== ""
    && item.userID !== ""
@@ -260,7 +260,8 @@ export type ItemData = {
   itemID: string,
   name: string,
   description: string,
-  price: number,
+  minPrice: number,
+  recentPrice: number | null,
   category: ItemCategory,
   gender: ItemGender,
   size: string,
@@ -283,7 +284,8 @@ export const DefaultItemData: Readonly<ItemData> = {
   itemID: "",
   name: "",
   description: "",
-  price: -1,
+  minPrice: 0,
+  recentPrice: null,
   category: "",
   gender: "",
   size: "",
@@ -299,6 +301,14 @@ export const DefaultItemData: Readonly<ItemData> = {
   likeCount: 0,
   favCount: 0,
   isVisible: false
+}
+
+export type ItemInfo = {
+  item: ItemData,
+  distance: number,
+  viewTime: number | null,
+  likeTime: number | null,
+  favTime: number | null
 }
 
 export type ItemFilter = {

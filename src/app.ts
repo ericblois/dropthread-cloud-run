@@ -47,6 +47,7 @@ app.post('/*', async (req, res, next) => {
       res.status(404)
     }
   } catch (e) {
+    console.error(e)
     res.status(500).json({
       error: e
     })
