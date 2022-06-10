@@ -19,8 +19,8 @@ const verifyUser = async (token?: string) => {
   }
   throw new Error('Invalid token, unauthorized');
 }
-
-app.get('/*', async (req, res, next) => {
+// App will only get POST requests
+/* app.get('/*', async (req, res, next) => {
   try {
     const url = req.url.substring(1)
     if (functions.GET[url]) {
@@ -34,7 +34,7 @@ app.get('/*', async (req, res, next) => {
       error: e
     })
   }
-});
+}); */
 
 app.post('/*', async (req, res, next) => {
   try {
