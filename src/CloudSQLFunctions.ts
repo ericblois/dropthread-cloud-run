@@ -48,7 +48,40 @@ const formatItemData = (data: any) => {
     }
     return newData as ItemData
 }
-
+// [WORKING] Updates the last view times of an array of items
+const updateViewTimes = async (userID: string, items: ItemData[]) => {
+    const currentTime = Date.now()
+    let numUpdates = await POOL.transaction(async (trx) => {
+        const updates = await Promise.all(items.map(async (item) => {
+            // A user viewing their own item does not count as a view
+            if (item.userID === userID) {
+                return 0
+            }
+            const numInserts = await Promise.all([
+                // Update UserInteractsItem (perform an 'upsert')
+                trx.raw(`
+                INSERT INTO "UserInteractsItem" ("userID", "itemID", "viewTime")
+                VALUES ('${userID}', '${item.itemID}', ${currentTime})
+                ON CONFLICT ON CONSTRAINT "UserInteractsItem_pkey"
+                DO UPDATE SET
+                    "userID" = excluded."userID",
+                    "itemID" = excluded."itemID",
+                    "viewTime" = excluded."viewTime"
+                    WHERE "UserInteractsItem"."userID" = '${item.userID}'
+                    AND "UserInteractsItem"."itemID" = '${item.itemID}'
+                `),
+                // Update Item
+                trx('Item').where({itemID: item.itemID}).increment('viewCount', 1)
+            ])
+            // Get number of inserts / merges performed (should be 1)
+            return numInserts[0].length
+        }))
+        // Sum up number of updates
+        return updates.length > 0 ? updates.reduce((total, num) => total + num) : 0
+    })
+    return numUpdates
+}
+// [WORKING] Takes a query for some items and adds additional information to the result
 const getItemsWithInfo = async (userID: string, itemQuery: Knex.QueryBuilder) => {
     // Join with UserInteractsItem to get the last time this user viewed and liked the items (get ItemInfo)
     let query = POOL.raw(`
@@ -58,10 +91,10 @@ const getItemsWithInfo = async (userID: string, itemQuery: Knex.QueryBuilder) =>
         ON i."itemID" = uit."itemID"
         AND uit."userID" = '${userID}'
     `)
-    // Must get first element of raw result, which is actual results
-    let result: any[] = (await query).rows
-    return result.map((data) => {
-        let distance = -1
+    // Get results
+    const result: any[] = (await query).rows
+    const itemInfos = result.map((data) => {
+        let distance: number | null = null
         // Format distance
         if (data['distInM'] !== undefined) {
             distance = Math.ceil(data['distInM']/1000)
@@ -77,6 +110,8 @@ const getItemsWithInfo = async (userID: string, itemQuery: Knex.QueryBuilder) =>
             distance: distance
         }
     }) as ItemInfo[]
+    await updateViewTimes(userID, itemInfos.map(({item}) => item))
+    return itemInfos
 }
 
 // Creates a user's data
@@ -88,7 +123,7 @@ export const createUser = async (userData: UserData) => {
         throw new Error(`Could not insert user of ID: ${userData.userID}`)
     }
 }
-// Retrieves a user's data
+// [WORKING] Retrieves a user's data
 export const getUser = async (userID: string) => {
     const result = await POOL('User').where({userID: userID})
     // Validate result
@@ -97,19 +132,20 @@ export const getUser = async (userID: string) => {
     } else if (result.length < 1) {
         throw new Error(`Could not find user of ID: ${userID}`)
     }
-    const itemData = result[0] as UserData
-    return itemData
+    return result[0] as UserData
 }
-// Updates a user's data
-export const updateUser = async (userData: Partial<UserData>) => {
-    await POOL('User').where({userID: userData.userID}).update(userData)
+// [WORKING] Updates a user's data
+export const updateUser = async (userID: string, userData: Partial<UserData>) => {
+    // Ensure user does not change their userID
+    userData.userID = userID
+    await POOL('User').where({userID: userID}).update(userData)
 }
-// Adds a new user to the database
+// [WORKING] Adds a new user to the database
 export const addUserData = async (userData: UserData) => {
     await POOL('User').insert(userData)
     return userData.userID
 }
-// Retrieves multiple (viewable) items, along with their distances
+// [WORKING] Retrieves multiple (viewable) items, along with their distances
 export const getItems = async (userID: string, itemIDs: string[], coords?: {lat: number, long: number}) => {
     // Create selections for query
     const selections: any[] = ['*']
@@ -125,7 +161,7 @@ export const getItems = async (userID: string, itemIDs: string[], coords?: {lat:
         })
     return await getItemsWithInfo(userID, query)
 }
-// Retrieves all (viewable) items that a specific user has available, along with their distances
+// [WORKING] Retrieves all (viewable) items that a specific user has available, along with their distances
 export const getUserItems = async (requestingUserID: string, targetUserID: string, coords?: {lat: number, long: number}) => {
     // Create selections for query
     const selections: any[] = ['*']
@@ -140,7 +176,7 @@ export const getUserItems = async (requestingUserID: string, targetUserID: strin
     }
     return await getItemsWithInfo(requestingUserID, query)
 }
-// Executes a custom query and returns all items
+// [WORKING] Executes a custom query and returns all items
 export const getFilteredItems = async (userID: string, filters: ItemFilter, coords?: {lat: number, long: number}) => {
     // Create selections for query
     const selections: any[] = ['*']
@@ -275,30 +311,6 @@ export const updateItem = async (userID: string, itemData: ItemData, bypass = fa
 // Delete an item
 export const deleteItem = async (userID: string, itemData: ItemData) => {
     POOL('Item').where({itemID: itemData.itemID}).del()
-}
-// Updates the last view times of an array of items
-export const updateViewTimes = async (userID: string, viewedItemIDs: string[]) => {
-    const currentTime = Date.now()
-    await POOL.transaction(async (trx) => {
-        // Iterate through each item ID
-        const updates = Promise.all(viewedItemIDs.map((itemID) => {
-            return Promise.all([
-                // Update both UserViewsItem and ItemData
-                trx('UserInteractsItem')
-                .where({
-                    itemID: itemID,
-                    userID: userID
-                })
-                .upsert({
-                    userID: userID,
-                    itemID: itemID,
-                    viewtime: currentTime
-                }),
-                trx('Item').where({itemID: itemID}).increment('viewCount', 1)
-            ])
-        }))
-        await updates
-    })
 }
 // Unlikes an item, updates the user's liked items list and the item's likeCount
 export const unlikeItem = async (userID: string, itemID: string) => {

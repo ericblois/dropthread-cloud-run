@@ -305,7 +305,7 @@ export const DefaultItemData: Readonly<ItemData> = {
 
 export type ItemInfo = {
   item: ItemData,
-  distance: number,
+  distance: number | null,
   viewTime: number | null,
   likeTime: number | null,
   favTime: number | null

@@ -42,9 +42,10 @@ export const functions = {
             return await SQL.createUser(data.userData)
         },
         updateUser: async (data: {
+            userID: string,
             userData: Partial<UserData>
         }) => {
-            return await SQL.updateUser(data.userData)
+            return await SQL.updateUser(data.userID, data.userData)
         },
         createItem: async (data: {
             userID: string,
@@ -64,12 +65,12 @@ export const functions = {
         }) => {
             return await SQL.deleteItem(data.userID, data.itemData)
         },
-        updateViewTimes: async (data: {
+        /*updateViewTimes: async (data: {
             userID: string,
             itemIDs: string[]
         }) => {
             return await SQL.updateViewTimes(data.userID, data.itemIDs)
-        },
+        },*/
         unlikeItem: async (data: {
             userID: string,
             itemID: string
