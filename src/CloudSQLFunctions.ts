@@ -277,30 +277,29 @@ export const createItem = async (userID: string, itemData: ItemData) => {
     await POOL('Item').insert(newData)
     return newItemID
 }
-// [NEEDS CHECK] Updates an item's data
-export const updateItem = async (userID: string, itemData: ItemData, bypass = false) => {
-    // Skip other steps if called by a trigger function
-    if (bypass) {
-        await POOL('Item').where({itemID: itemData.itemID}).update(itemData)
-        return
+// [WORKING] Updates an item's data
+export const updateItem = async (userID: string, itemData: Partial<ItemData>) => {
+    // Check for item ID
+    if (!itemData.itemID) {
+        throw new Error('No item ID was found when trying to update item')
     }
     const userData = await getUser(userID)
     // Validate location of the user
-    try {
-        geofire.validateLocation([userData.lat, userData.long])
-    } catch (e) {
-        throw new Error("Invalid location.")
-    }
+    geofire.validateLocation([userData.lat, userData.long])
+    // Get old item data
+    const oldResult = (await POOL('Item').where({userID: userID, itemID: itemData.itemID}).select('*'))[0]
+    const oldItemData = formatItemData(oldResult)
+    // Update and validate new data
     const newItemData: ItemData = {
         ...DefaultItemData,
+        ...oldItemData,
         ...itemData,
-        // Prevent this item's userID from being changed
+        // Prevent this item's IDs from being changed
         userID: userID,
-        country: userData.country,
-        region: userData.region,
+        itemID: oldItemData.itemID
     }
     newItemData.keywords = getItemKeywords(newItemData)
-    newItemData.isVisible = itemData.isVisible && validateItem(itemData)
+    newItemData.isVisible = itemData.isVisible && validateItem(newItemData)
     // Make geog for item
     const coords = pgis.makePoint(userData.long, userData.lat)
     // Set update data for item
@@ -308,7 +307,7 @@ export const updateItem = async (userID: string, itemData: ItemData, bypass = fa
         ...newItemData,
         geoCoords: coords
     }
-    await POOL('Item').where({itemID: itemData.itemID}).update(updateData)
+    await POOL('Item').where({userID: userID, itemID: itemData.itemID}).update(updateData)
     return
 }
 // [NEEDS CHECK] Delete an item

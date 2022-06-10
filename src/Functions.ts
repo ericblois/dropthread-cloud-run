@@ -55,7 +55,7 @@ export const functions = {
         },
         updateItem: async (data: {
             userID: string,
-            itemData: ItemData
+            itemData: Partial<ItemData>
         }) => {
             return await SQL.updateItem(data.userID, data.itemData)
         },
