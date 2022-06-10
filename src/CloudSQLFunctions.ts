@@ -7,10 +7,15 @@ import dotenv from 'dotenv'
 
 // IMPORTANT! Always use "double quotes" when using any raw query
 
+/*  [WORKING] -> Function has recently been tested and shown to work
+    [NEEDS CHECK] -> Function hasn't changed through multiple updates to code and needs to be tested
+    [BROKEN] -> Functions needs to be fixed or removed
+ */
+
 if (!process.env.PG_USER) {
     dotenv.config()
 }
-
+// [WORKING] Create a pool for the PostgreSQL database
 const createCloudPool = (config?: Knex.Config) => {
     const dbSocketPath = process.env.PG_SOCKET_PATH || '/cloudsql';
     // Establish a connection to the database
@@ -26,12 +31,10 @@ const createCloudPool = (config?: Knex.Config) => {
         ...config,
     });
 };
-
 const POOL = createCloudPool()
-
 const pgis = postgis(POOL)
 
-// Removes all values from data that shouldn't be sent to a user
+// [WORKING] Removes all values from data that shouldn't be sent to a user
 const formatItemData = (data: any) => {
     let newData = data
     const safeKeys = Object.keys(DefaultItemData)
@@ -240,7 +243,7 @@ export const getFilteredItems = async (userID: string, filters: ItemFilter, coor
     }
     return await getItemsWithInfo(userID, query)
 }
-// Creates a new item, and returns the item ID
+// [NEEDS CHECK] Creates a new item, and returns the item ID
 export const createItem = async (userID: string, itemData: ItemData) => {
     const userData = await getUser(userID)
     // Validate location of the user
@@ -274,7 +277,7 @@ export const createItem = async (userID: string, itemData: ItemData) => {
     await POOL('Item').insert(newData)
     return newItemID
 }
-// Updates an item's data
+// [NEEDS CHECK] Updates an item's data
 export const updateItem = async (userID: string, itemData: ItemData, bypass = false) => {
     // Skip other steps if called by a trigger function
     if (bypass) {
@@ -308,11 +311,11 @@ export const updateItem = async (userID: string, itemData: ItemData, bypass = fa
     await POOL('Item').where({itemID: itemData.itemID}).update(updateData)
     return
 }
-// Delete an item
+// [NEEDS CHECK] Delete an item
 export const deleteItem = async (userID: string, itemData: ItemData) => {
     POOL('Item').where({itemID: itemData.itemID}).del()
 }
-// Unlikes an item, updates the user's liked items list and the item's likeCount
+// [NEEDS CHECK] Unlikes an item, updates the user's liked items list and the item's likeCount
 export const unlikeItem = async (userID: string, itemID: string) => {
     await POOL.transaction(async (trx) => {
         await Promise.all([
@@ -331,7 +334,7 @@ export const unlikeItem = async (userID: string, itemID: string) => {
         ])
     })
 }
-// Likes an item, updates the user's liked items list and the item's user likes list
+// [NEEDS CHECK] Likes an item, updates the user's liked items list and the item's user likes list
 export const likeItem = async (userID: string, itemID: string) => {
     await POOL.transaction(async (trx) => {
         await Promise.all([
