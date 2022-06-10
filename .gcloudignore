@@ -1,0 +1,8 @@
+.gcloudignore
+.git
+.gitignore
+
+node_modules
+
+src/dropthread-firebase-adminsdk-9twsp-10e251ff3d.json
+!src/dropthread-firebase-adminsdk-9twsp-10e251ff3d.json
