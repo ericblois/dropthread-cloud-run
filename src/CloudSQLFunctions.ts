@@ -1,9 +1,10 @@
 import * as geofire from "geofire-common"
 import { knex, Knex } from "knex"
 import postgis from "knex-postgis"
-import { ItemData, ItemFilter, UserData, validateItem, ItemFilterKey, getItemKeywords, DefaultItemData, DefaultItemFilter, ItemInfo } from "./DataTypes";
+import { ItemData, ItemFilter, UserData, validateItem, ItemFilterKey, getItemKeywords, DefaultItemData, DefaultItemFilter, ItemInfo, UserInteractsItem } from "./DataTypes";
 import * as uuid from "uuid"
 import dotenv from 'dotenv'
+import pg from 'pg'
 
 // IMPORTANT! Always use "double quotes" when using any raw query
 
@@ -11,6 +12,15 @@ import dotenv from 'dotenv'
     [NEEDS CHECK] -> Function hasn't changed through multiple updates to code and needs to be tested
     [BROKEN] -> Functions needs to be fixed or removed
  */
+
+// Set type parsers for pg (otherwise numbers may be returned as strings)
+pg.types.setTypeParser(pg.types.builtins.NUMERIC, parseFloat)
+pg.types.setTypeParser(pg.types.builtins.FLOAT4, parseFloat)
+pg.types.setTypeParser(pg.types.builtins.FLOAT8, parseFloat)
+pg.types.setTypeParser(pg.types.builtins.MONEY, parseFloat)
+pg.types.setTypeParser(pg.types.builtins.INT2, parseInt)
+pg.types.setTypeParser(pg.types.builtins.INT4, parseInt)
+pg.types.setTypeParser(pg.types.builtins.INT8, parseInt)
 
 if (!process.env.PG_USER) {
     dotenv.config()
@@ -149,7 +159,7 @@ export const addUserData = async (userData: UserData) => {
     return userData.userID
 }
 // [WORKING] Retrieves multiple (viewable) items, along with their distances
-export const getItems = async (userID: string, itemIDs: string[], coords?: {lat: number, long: number}) => {
+export const getItemsFromIDs = async (userID: string, itemIDs: string[], coords?: {lat: number, long: number}) => {
     // Create selections for query
     const selections: any[] = ['*']
     // Add coords to query
@@ -245,13 +255,13 @@ export const getFilteredItems = async (userID: string, filters: ItemFilter, coor
 }
 // [NEEDS CHECK] Creates a new item, and returns the item ID
 export const createItem = async (userID: string, itemData: ItemData) => {
+     // Check for item ID
+     if (!itemData.itemID) {
+        throw new Error('No item ID was found when trying to update item')
+    }
     const userData = await getUser(userID)
     // Validate location of the user
-    try {
-        geofire.validateLocation([userData.lat, userData.long])
-    } catch (e) {
-        throw new Error("User has an invalid location.")
-    }
+    geofire.validateLocation([userData.lat, userData.long])
     //Generate a new item ID
     const newItemID = uuid.v4()
     // Update new item's data
@@ -264,6 +274,8 @@ export const createItem = async (userID: string, itemData: ItemData) => {
         region: userData.region,
         images: [],
     }
+    // Make sure recent price is always more than or equal to minimum price
+    newItemData.recentPrice = newItemData.minPrice > newItemData.recentPrice ? newItemData.minPrice : newItemData.recentPrice
     newItemData.keywords = getItemKeywords(newItemData)
     // Check validity of item's data
     newItemData.isVisible = itemData.isVisible && validateItem(newItemData)
@@ -298,6 +310,7 @@ export const updateItem = async (userID: string, itemData: Partial<ItemData>) =>
         userID: userID,
         itemID: oldItemData.itemID
     }
+    newItemData.recentPrice = newItemData.minPrice > newItemData.recentPrice ? newItemData.minPrice : newItemData.recentPrice
     newItemData.keywords = getItemKeywords(newItemData)
     newItemData.isVisible = itemData.isVisible && validateItem(newItemData)
     // Make geog for item
@@ -314,41 +327,96 @@ export const updateItem = async (userID: string, itemData: Partial<ItemData>) =>
 export const deleteItem = async (userID: string, itemData: ItemData) => {
     POOL('Item').where({itemID: itemData.itemID}).del()
 }
-// [NEEDS CHECK] Unlikes an item, updates the user's liked items list and the item's likeCount
+// [NEEDS CHECK] Unlikes an item, updates the item's price and like count
 export const unlikeItem = async (userID: string, itemID: string) => {
+    // Get all 'like' interactions for this item, sorted descending
+    const itemInteractions = (await POOL('UserInteractsItem')
+        .select('*')
+        .where({itemID: itemID})
+        .whereNotNull('likeTime')
+        .orderBy('likePrice', 'desc')
+    ) as UserInteractsItem[]
+    // Find this user's like
+    const userInteraction = itemInteractions.find((uit) => (uit.userID === userID))
+    if (!userInteraction) {
+        throw new Error('Could not find user like in UserInteractsItem')
+    }
+    // Get item data
+    let itemInfo = (await getItemsFromIDs(userID, [itemID]))[0]
+    let revertedPrice = itemInfo.item.minPrice
+    // Check if there are other likes
+    if (itemInteractions.length > 1) {
+        // Check if this user's like price is the highest
+        if (itemInteractions[0].userID === userID) {
+            revertedPrice = itemInteractions[0].likePrice
+            /* 
+                Send some notification to second highest user to let them
+                know they now have the highest price, and notify seller that price has gone down
+            */
+        } // Otherwise price does not need to be updated
+        else {
+            revertedPrice = itemInfo.item.recentPrice
+        }
+    }
     await POOL.transaction(async (trx) => {
         await Promise.all([
-            trx('UserInteractsItem')
-            .where({
-                itemID: itemID,
-                userID: userID
-            })
-            .whereNotNull('likeTime')
-            .upsert({
-                userID: userID,
-                itemID: itemID,
-                likeTime: null
-            }),
-            trx('Item').where({itemID: itemID}).decrement('likeCount', 1)
+            trx.raw(`
+                INSERT INTO "UserInteractsItem" ("userID", "itemID", "likeTime", "likePrice")
+                VALUES ('${userID}', '${itemID}', NULL, NULL)
+                ON CONFLICT ON CONSTRAINT "UserInteractsItem_pkey"
+                DO UPDATE SET
+                    "userID" = excluded."userID",
+                    "itemID" = excluded."itemID",
+                    "likeTime" = excluded."likeTime",
+                    "likePrice" = excluded."likePrice"
+                    WHERE "UserInteractsItem"."userID" = '${userID}'
+                    AND "UserInteractsItem"."itemID" = '${itemID}'
+                `),
+            trx('Item').where({itemID: itemID}).update({recentPrice: revertedPrice}).decrement('likeCount', 1)
         ])
     })
 }
-// [NEEDS CHECK] Likes an item, updates the user's liked items list and the item's user likes list
+/* [NEEDS CHECK] Likes an item, updates the user's liked items list and the item's user likes list.
+    The same user liking an item twice will count as 2 likes,
+    a 'like' should represent the number of times the price has increased on an item
+*/
 export const likeItem = async (userID: string, itemID: string) => {
+    // Get all 'like' interactions for this item, sorted descending
+    const itemInteractions = (await POOL('UserInteractsItem')
+        .select('*')
+        .where({itemID: itemID})
+        .whereNotNull('likeTime')
+        .orderBy('likePrice', 'desc')
+    ) as UserInteractsItem[]
+    // Check if this user has already liked this item, and if they have the highest price
+    if (itemInteractions.length > 1 && itemInteractions[0].userID === userID) {
+        return itemInteractions[0].likeTime
+    }
+    let itemInfo = (await getItemsFromIDs(userID, [itemID]))[0]
+    // Increase price of item by 5% (rounded up)
+    let newPrice = Math.ceil(itemInfo.item.recentPrice*1.05)
+    // Check if price is too low to use percentage
+    if (itemInfo.item.recentPrice*0.05 < 2.5) {
+        // Add $2.50 to price instead
+        newPrice = itemInfo.item.recentPrice + 2.5
+    }
+    const currentTime = Date.now()
     await POOL.transaction(async (trx) => {
         await Promise.all([
-            trx('UserInteractsItem')
-            .where({
-                itemID: itemID,
-                userID: userID
-            })
-            .whereNull('likeTime')
-            .upsert({
-                userID: userID,
-                itemID: itemID,
-                likeTime: Date.now()
-            }),
-            trx('Item').where({itemID: itemID}).increment('likeCount', 1)
+            trx.raw(`
+                INSERT INTO "UserInteractsItem" ("userID", "itemID", "likeTime", "likePrice")
+                VALUES ('${userID}', '${itemID}', ${currentTime}, ${itemInfo.item.recentPrice})
+                ON CONFLICT ON CONSTRAINT "UserInteractsItem_pkey"
+                DO UPDATE SET
+                    "userID" = excluded."userID",
+                    "itemID" = excluded."itemID",
+                    "likeTime" = excluded."likeTime",
+                    "likePrice" = excluded."likePrice"
+                    WHERE "UserInteractsItem"."userID" = '${userID}'
+                    AND "UserInteractsItem"."itemID" = '${itemID}'
+                `),
+            trx('Item').where({itemID: itemID}).update({recentPrice: newPrice}).increment('likeCount', 1)
         ])
     })
+    return currentTime
 }

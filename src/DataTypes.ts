@@ -261,7 +261,7 @@ export type ItemData = {
   name: string,
   description: string,
   minPrice: number,
-  recentPrice: number | null,
+  recentPrice: number,
   category: ItemCategory,
   gender: ItemGender,
   size: string,
@@ -285,7 +285,7 @@ export const DefaultItemData: Readonly<ItemData> = {
   name: "",
   description: "",
   minPrice: 0,
-  recentPrice: null,
+  recentPrice: 0,
   category: "",
   gender: "",
   size: "",
@@ -331,3 +331,12 @@ export const DefaultItemFilter: ItemFilter = {
 }
 
 export type ItemFilterKey = keyof ItemFilter
+
+export type UserInteractsItem = {
+  userID: string,
+  itemID: string,
+  viewTime: number,
+  likeTime: number,
+  favTime: number,
+  likePrice: number
+}

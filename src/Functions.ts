@@ -9,14 +9,14 @@ export const functions = {
         }) => {
             return await SQL.getUser(data.userID)
         },
-        getItems: async (data: {
+        getItemsFromIDs: async (data: {
             userID: string,
             itemIDs: string[],
             coords?: {
                 lat: number;
                 long: number;
         }}) => {
-            return await SQL.getItems(data.userID, data.itemIDs, data.coords)
+            return await SQL.getItemsFromIDs(data.userID, data.itemIDs, data.coords)
         },
         getUserItems: async (data: {
             requestingUserID: string,
