@@ -189,6 +189,41 @@ export const getUserItems = async (requestingUserID: string, targetUserID: strin
     }
     return await getItemsWithInfo(requestingUserID, query)
 }
+// [WORKING] Retrieves all liked items for a user, along with their distances
+export const getLikedItems = async (userID: string, coords?: {lat: number, long: number}) => {
+    // Create distance selection for query
+    const distSelect = coords ? `, ${pgis.distanceSphere(pgis.geometry('geoCoords'), pgis.makePoint(coords.long, coords.lat)).as('distInM').toQuery()}` : ''
+    let query = POOL.raw(`
+        WITH uit AS (
+            SELECT * FROM "UserInteractsItem"
+            WHERE "userID" = '${userID}'
+            AND "likeTime" IS NOT NULL
+            AND "likePrice" IS NOT NULL
+        )
+        SELECT *${distSelect} FROM uit LEFT JOIN "Item" as i
+            ON uit."itemID" = i."itemID"
+            AND i."isVisible" IS TRUE
+    `)
+    const result = (await query).rows as any[]
+    const itemInfos = result.map((data) => {
+        let distance: number | null = null
+        // Format distance
+        if (data['distInM'] !== undefined) {
+            distance = Math.ceil(data['distInM']/1000)
+            if (distance < 1) {
+                distance = 1
+            }
+        }
+        return {
+            viewTime: data.viewTime,
+            likeTime: data.likeTime,
+            favTime: data.favTime,
+            item: formatItemData(data),
+            distance: distance
+        }
+    }) as ItemInfo[]
+    return itemInfos
+}
 // [WORKING] Executes a custom query and returns all items
 export const getFilteredItems = async (userID: string, filters: ItemFilter, coords?: {lat: number, long: number}) => {
     // Create selections for query
@@ -310,6 +345,7 @@ export const updateItem = async (userID: string, itemData: Partial<ItemData>) =>
         userID: userID,
         itemID: oldItemData.itemID
     }
+    // Make sure recent price is always more than or equal to minimum price
     newItemData.recentPrice = newItemData.minPrice > newItemData.recentPrice ? newItemData.minPrice : newItemData.recentPrice
     newItemData.keywords = getItemKeywords(newItemData)
     newItemData.isVisible = itemData.isVisible && validateItem(newItemData)
@@ -327,7 +363,7 @@ export const updateItem = async (userID: string, itemData: Partial<ItemData>) =>
 export const deleteItem = async (userID: string, itemData: ItemData) => {
     POOL('Item').where({itemID: itemData.itemID}).del()
 }
-// [NEEDS CHECK] Unlikes an item, updates the item's price and like count
+// [WORKING] Unlikes an item, updates the item's price and like count
 export const unlikeItem = async (userID: string, itemID: string) => {
     // Get all 'like' interactions for this item, sorted descending
     const itemInteractions = (await POOL('UserInteractsItem')
@@ -376,7 +412,7 @@ export const unlikeItem = async (userID: string, itemID: string) => {
         ])
     })
 }
-/* [NEEDS CHECK] Likes an item, updates the user's liked items list and the item's user likes list.
+/* [WORKING] Likes an item, updates the user's liked items list and the item's user likes list.
     The same user liking an item twice will count as 2 likes,
     a 'like' should represent the number of times the price has increased on an item
 */

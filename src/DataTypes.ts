@@ -229,6 +229,11 @@ export const validateUserData = (userData: UserData) => {
   )
 }
 
+export type Coords = {
+  lat: number,
+  long: number
+}
+
 export const ItemCategories = [
   "top",
   "bottom",

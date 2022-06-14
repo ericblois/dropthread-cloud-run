@@ -1,5 +1,5 @@
 import * as SQL from "./CloudSQLFunctions"
-import { ItemData, ItemFilter, UserData } from "./DataTypes";
+import { Coords, ItemData, ItemFilter, UserData } from "./DataTypes";
 
 export const functions = {
     GET: {},
@@ -12,28 +12,24 @@ export const functions = {
         getItemsFromIDs: async (data: {
             userID: string,
             itemIDs: string[],
-            coords?: {
-                lat: number;
-                long: number;
-        }}) => {
+            coords: Coords}) => {
             return await SQL.getItemsFromIDs(data.userID, data.itemIDs, data.coords)
         },
         getUserItems: async (data: {
             requestingUserID: string,
             targetUserID: string,
-            coords?: {
-                lat: number;
-                long: number;
-        }}) => {
+            coords: Coords}) => {
             return await SQL.getUserItems(data.requestingUserID, data.targetUserID, data.coords)
+        },
+        getLikedItems: async (data: {
+            userID: string,
+            coords: Coords}) => {
+            return await SQL.getLikedItems(data.userID, data.coords)
         },
         getFilteredItems: async (data: {
             userID: string,
             filters: ItemFilter,
-            coords?: {
-                lat: number;
-                long: number;
-        }}) => {
+            coords: Coords}) => {
             return await SQL.getFilteredItems(data.userID, data.filters, data.coords)
         },
         createUser: async (data: {
