@@ -119,6 +119,7 @@ const getItemsWithInfo = async (userID: string, itemQuery: Knex.QueryBuilder) =>
             viewTime: data.viewTime,
             likeTime: data.likeTime,
             favTime: data.favTime,
+            likePrice: data.likePrice,
             item: formatItemData(data),
             distance: distance
         }

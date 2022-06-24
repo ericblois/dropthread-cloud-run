@@ -313,7 +313,8 @@ export type ItemInfo = {
   distance: number | null,
   viewTime: number | null,
   likeTime: number | null,
-  favTime: number | null
+  favTime: number | null,
+  likePrice: number | null
 }
 
 export type ItemFilter = {
