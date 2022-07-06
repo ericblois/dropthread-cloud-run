@@ -167,6 +167,12 @@ export type OrderData = {
   status: OrderStatus
 }
 
+export type NotificationData = {
+  userID: string,
+  message: string,
+  imageURL?: string
+}
+
 export const UserGenders = ["male", "female", "non-binary"] as const
 export type UserGender = (typeof UserGenders)[number]
 
@@ -182,6 +188,7 @@ export type UserData = {
   region: Region,
   lat: number,
   long: number,
+  expoPushToken: string | null
 }
 
 export const DefaultUserData: Readonly<UserData> = {
@@ -195,7 +202,8 @@ export const DefaultUserData: Readonly<UserData> = {
   country: "",
   region: "",
   lat: 0,
-  long: 0
+  long: 0,
+  expoPushToken: null
 }
 
 export const validateUserData = (userData: UserData) => {
@@ -245,6 +253,8 @@ export const ItemCategories = [
   "other"
 ] as const
 
+export const itemPercentIncrease = 1.05
+export const itemDollarIncrease = 2.5
 
 export type ItemCategory = (typeof ItemCategories)[number] | ""
 
@@ -266,7 +276,8 @@ export type ItemData = {
   name: string,
   description: string,
   minPrice: number,
-  recentPrice: number,
+  lastPrice: number,
+  currentPrice: number,
   category: ItemCategory,
   gender: ItemGender,
   size: string,
@@ -290,7 +301,8 @@ export const DefaultItemData: Readonly<ItemData> = {
   name: "",
   description: "",
   minPrice: 0,
-  recentPrice: 0,
+  lastPrice: 0,
+  currentPrice: 0,
   category: "",
   gender: "",
   size: "",

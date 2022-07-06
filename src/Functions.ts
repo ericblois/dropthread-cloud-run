@@ -75,9 +75,16 @@ export const functions = {
         },
         likeItem: async (data: {
             userID: string,
-            itemID: string
+            itemID: string,
+            JWTToken: string
         }) => {
-            return await SQL.likeItem(data.userID, data.itemID)
+            return await SQL.likeItem(data.userID, data.itemID, data.JWTToken)
+        },
+        subscribeNotifications: async (data: {
+            userID: string,
+            token: string | null
+        }) => {
+            await SQL.subscribeNotifications(data.userID, data.token)
         }
     }
 

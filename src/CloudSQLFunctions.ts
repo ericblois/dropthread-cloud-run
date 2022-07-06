@@ -1,10 +1,12 @@
 import * as geofire from "geofire-common"
 import { knex, Knex } from "knex"
 import postgis from "knex-postgis"
-import { ItemData, ItemFilter, UserData, validateItem, ItemFilterKey, getItemKeywords, DefaultItemData, DefaultItemFilter, ItemInfo, UserInteractsItem } from "./DataTypes";
+import { ItemData, ItemFilter, UserData, validateItem, ItemFilterKey, getItemKeywords, DefaultItemData, DefaultItemFilter, ItemInfo, UserInteractsItem, itemPercentIncrease, itemDollarIncrease, NotificationData } from "./DataTypes";
 import * as uuid from "uuid"
 import dotenv from 'dotenv'
 import pg from 'pg'
+import Expo from "expo-server-sdk";
+import fetch from 'node-fetch'
 
 // IMPORTANT! Always use "double quotes" when using any raw query
 
@@ -43,6 +45,11 @@ const createCloudPool = (config?: Knex.Config) => {
 };
 const POOL = createCloudPool()
 const pgis = postgis(POOL)
+// [WORKING] Increase an item's price
+const increasePrice = (lastPrice: number) => {
+    // Increase price of item by 5% (rounded up) or $2.50
+    return Math.max(lastPrice*itemPercentIncrease, lastPrice + itemDollarIncrease)
+}
 
 // [WORKING] Removes all values from data that shouldn't be sent to a user
 const formatItemData = (data: any) => {
@@ -95,10 +102,13 @@ const updateViewTimes = async (userID: string, items: ItemData[]) => {
     return numUpdates
 }
 // [WORKING] Takes a query for some items and adds additional information to the result
+/*
+    IMPORTANT: Update getLikedItems when you update this
+*/
 const getItemsWithInfo = async (userID: string, itemQuery: Knex.QueryBuilder) => {
     // Join with UserInteractsItem to get the last time this user viewed and liked the items (get ItemInfo)
     let query = POOL.raw(`
-    SELECT i.*, uit."viewTime", uit."likeTime", uit."favTime"
+    SELECT i.*, uit."viewTime", uit."likeTime", uit."favTime", uit."likePrice"
     FROM (${itemQuery.toQuery()}) AS i
     LEFT JOIN "UserInteractsItem" AS uit
         ON i."itemID" = uit."itemID"
@@ -219,6 +229,7 @@ export const getLikedItems = async (userID: string, coords?: {lat: number, long:
             viewTime: data.viewTime,
             likeTime: data.likeTime,
             favTime: data.favTime,
+            likePrice: data.likePrice,
             item: formatItemData(data),
             distance: distance
         }
@@ -311,7 +322,8 @@ export const createItem = async (userID: string, itemData: ItemData) => {
         images: [],
     }
     // Make sure recent price is always more than or equal to minimum price
-    newItemData.recentPrice = newItemData.minPrice > newItemData.recentPrice ? newItemData.minPrice : newItemData.recentPrice
+    newItemData.lastPrice = newItemData.minPrice > newItemData.lastPrice ? newItemData.minPrice : newItemData.lastPrice
+    newItemData.currentPrice = newItemData.lastPrice >= newItemData.currentPrice ? increasePrice(newItemData.lastPrice) : newItemData.currentPrice
     newItemData.keywords = getItemKeywords(newItemData)
     // Check validity of item's data
     newItemData.isVisible = itemData.isVisible && validateItem(newItemData)
@@ -347,7 +359,8 @@ export const updateItem = async (userID: string, itemData: Partial<ItemData>) =>
         itemID: oldItemData.itemID
     }
     // Make sure recent price is always more than or equal to minimum price
-    newItemData.recentPrice = newItemData.minPrice > newItemData.recentPrice ? newItemData.minPrice : newItemData.recentPrice
+    newItemData.lastPrice = newItemData.minPrice > newItemData.lastPrice ? newItemData.minPrice : newItemData.lastPrice
+    newItemData.currentPrice = newItemData.lastPrice >= newItemData.currentPrice ? increasePrice(newItemData.lastPrice) : newItemData.currentPrice
     newItemData.keywords = getItemKeywords(newItemData)
     newItemData.isVisible = itemData.isVisible && validateItem(newItemData)
     // Make geog for item
@@ -380,20 +393,16 @@ export const unlikeItem = async (userID: string, itemID: string) => {
     }
     // Get item data
     let itemInfo = (await getItemsFromIDs(userID, [itemID]))[0]
-    let revertedPrice = itemInfo.item.minPrice
-    // Check if there are other likes
-    if (itemInteractions.length > 1) {
-        // Check if this user's like price is the highest
-        if (itemInteractions[0].userID === userID) {
-            revertedPrice = itemInteractions[0].likePrice
-            /* 
-                Send some notification to second highest user to let them
-                know they now have the highest price, and notify seller that price has gone down
-            */
-        } // Otherwise price does not need to be updated
-        else {
-            revertedPrice = itemInfo.item.recentPrice
-        }
+    let revertedCurrentPrice = itemInfo.item.minPrice
+    let revertedLastPrice = itemInfo.item.minPrice
+    // Check if there are other likes and if this user's like price is the highest
+    if (itemInteractions.length > 1 && itemInteractions[0].userID === userID) {
+        revertedCurrentPrice = itemInteractions[0].likePrice
+        revertedLastPrice = itemInteractions[1].likePrice
+        /* 
+            Send some notification to second highest user to let them
+            know they now have the highest price, and notify seller that price has gone down
+        */
     }
     await POOL.transaction(async (trx) => {
         await Promise.all([
@@ -409,7 +418,7 @@ export const unlikeItem = async (userID: string, itemID: string) => {
                     WHERE "UserInteractsItem"."userID" = '${userID}'
                     AND "UserInteractsItem"."itemID" = '${itemID}'
                 `),
-            trx('Item').where({itemID: itemID}).update({recentPrice: revertedPrice}).decrement('likeCount', 1)
+            trx('Item').where({itemID: itemID}).update({currentPrice: revertedCurrentPrice, lastPrice: revertedLastPrice}).decrement('likeCount', 1)
         ])
     })
 }
@@ -417,7 +426,7 @@ export const unlikeItem = async (userID: string, itemID: string) => {
     The same user liking an item twice will count as 2 likes,
     a 'like' should represent the number of times the price has increased on an item
 */
-export const likeItem = async (userID: string, itemID: string) => {
+export const likeItem = async (userID: string, itemID: string, JWTToken: string) => {
     // Get all 'like' interactions for this item, sorted descending
     const itemInteractions = (await POOL('UserInteractsItem')
         .select('*')
@@ -430,19 +439,12 @@ export const likeItem = async (userID: string, itemID: string) => {
         return itemInteractions[0].likeTime
     }
     let itemInfo = (await getItemsFromIDs(userID, [itemID]))[0]
-    // Increase price of item by 5% (rounded up)
-    let newPrice = Math.ceil(itemInfo.item.recentPrice*1.05)
-    // Check if price is too low to use percentage
-    if (itemInfo.item.recentPrice*0.05 < 2.5) {
-        // Add $2.50 to price instead
-        newPrice = itemInfo.item.recentPrice + 2.5
-    }
     const currentTime = Date.now()
     await POOL.transaction(async (trx) => {
         await Promise.all([
             trx.raw(`
                 INSERT INTO "UserInteractsItem" ("userID", "itemID", "likeTime", "likePrice")
-                VALUES ('${userID}', '${itemID}', ${currentTime}, ${itemInfo.item.recentPrice})
+                VALUES ('${userID}', '${itemID}', ${currentTime}, ${itemInfo.item.currentPrice})
                 ON CONFLICT ON CONSTRAINT "UserInteractsItem_pkey"
                 DO UPDATE SET
                     "userID" = excluded."userID",
@@ -452,8 +454,48 @@ export const likeItem = async (userID: string, itemID: string) => {
                     WHERE "UserInteractsItem"."userID" = '${userID}'
                     AND "UserInteractsItem"."itemID" = '${itemID}'
                 `),
-            trx('Item').where({itemID: itemID}).update({recentPrice: newPrice}).increment('likeCount', 1)
+            trx('Item')
+                .where({itemID: itemID})
+                .update({
+                    currentPrice: increasePrice(itemInfo.item.currentPrice),
+                    lastPrice: itemInfo.item.currentPrice
+                })
+                .increment('likeCount', 1)
         ])
     })
+    await sendNotifications(JWTToken, [{
+        userID: itemInfo.item.userID,
+        message: `Someone liked your ${itemInfo.item.name}!`,
+        imageURL: itemInfo.item.images[0]
+    }])
     return currentTime
+}
+
+/* [WORKING] Save a user's expo push token in the database
+*/
+export const subscribeNotifications = async (userID: string, token: string | null) => {
+    if (token && !Expo.isExpoPushToken(token)) {
+        throw new Error(`Invalid expo push token: '${token}'`)
+    }
+    await POOL('User').where({userID: userID}).update({expoPushToken: token})
+}
+/* [WORKING] Trigger firebase function to send notifications.
+    Wait 10 ms to allow request to be sent, then move on (no need
+    to wait around for notifications to be sent)
+*/
+const sendNotifications = async (JWTToken: string, notifs: NotificationData[]) => {
+    // Send request to functions (Cloud Run shouldn't wait around for notification to be sent, so functions takes care of sending the notification instead)
+    fetch('https://us-central1-dropthread.cloudfunctions.net/sendNotifications', {
+        method: 'POST',
+        headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${JWTToken}`
+        },
+        body: JSON.stringify({
+            notifications: notifs,
+            JWTToken: JWTToken
+        })
+    })
+    await new Promise(r => setTimeout(r, 10));
 }

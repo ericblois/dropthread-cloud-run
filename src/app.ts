@@ -10,7 +10,7 @@ app.use(json());
 initializeApp({
   credential: applicationDefault()
 })
-const auth = getAuth();
+export const auth = getAuth();
 // Verify JWT token and return user ID
 const verifyUser = async (token?: string) => {
   if (token) {
