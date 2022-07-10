@@ -350,9 +350,10 @@ export const DefaultItemFilter: ItemFilter = {
 
 export type ItemFilterKey = keyof ItemFilter
 
-export type UserInteractsItem = {
+export type ItemInteraction = {
   userID: string,
   itemID: string,
+  distance: number,
   viewTime: number,
   likeTime: number,
   favTime: number,

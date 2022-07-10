@@ -80,6 +80,12 @@ export const functions = {
         }) => {
             return await SQL.likeItem(data.userID, data.itemID, data.JWTToken)
         },
+        getItemLikes: async (data: {
+            userID: string,
+            itemID: string
+        }) => {
+            return await SQL.getItemLikes(data.userID, data.itemID)
+        },
         subscribeNotifications: async (data: {
             userID: string,
             token: string | null

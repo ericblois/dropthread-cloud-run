@@ -1,13 +1,21 @@
 import * as geofire from "geofire-common"
 import { knex, Knex } from "knex"
 import postgis from "knex-postgis"
-import { ItemData, ItemFilter, UserData, validateItem, ItemFilterKey, getItemKeywords, DefaultItemData, DefaultItemFilter, ItemInfo, UserInteractsItem, itemPercentIncrease, itemDollarIncrease, NotificationData } from "./DataTypes";
+import { ItemData, ItemFilter, UserData, validateItem, ItemFilterKey, getItemKeywords, DefaultItemData, DefaultItemFilter, ItemInfo, itemPercentIncrease, itemDollarIncrease, NotificationData, ItemInteraction } from "./DataTypes";
 import * as uuid from "uuid"
 import dotenv from 'dotenv'
 import pg from 'pg'
 import Expo from "expo-server-sdk";
 import fetch from 'node-fetch'
 
+type UserInteractsItem = {
+    userID: string,
+    itemID: string,
+    viewTime: number,
+    likeTime: number,
+    favTime: number,
+    likePrice: number
+}
 // IMPORTANT! Always use "double quotes" when using any raw query
 
 /*  [WORKING] -> Function has recently been tested and shown to work
@@ -470,7 +478,35 @@ export const likeItem = async (userID: string, itemID: string, JWTToken: string)
     }])
     return currentTime
 }
-
+/* [WORKING] Gets all interactions for an item (only accessible by user who owns the item)
+*/
+export const getItemLikes = async (userID: string, itemID: string) => {
+    const itemData = (await getItemsFromIDs(userID, [itemID]))[0]
+    if (itemData.item.userID !== userID) {
+        throw new Error(`User '${userID}' is not permitted to access item '${itemID}''s likes`)
+    }
+    // Get all 'like' interactions for this item, sorted descending, and user data
+    const ownerUser = await getUser(userID)
+    const itemInteractions = (await POOL.raw(`
+        WITH uit AS (
+            SELECT * FROM "UserInteractsItem"
+            WHERE "itemID" = '${itemID}'
+            AND "likeTime" IS NOT NULL
+            ORDER BY "likePrice" DESC
+        )
+        SELECT uit.*, ST_DistanceSphere(ST_MakePoint(${ownerUser.long}, ${ownerUser.lat}), ST_MakePoint(u."long", u."lat")) as distance
+        FROM uit LEFT JOIN "User" as u
+        ON uit."userID" = u."userID"
+    `)).rows as ItemInteraction[]
+    // Format distances
+    itemInteractions.forEach((interaction) => {
+        interaction.distance = Math.ceil(interaction.distance/1000)
+        if (interaction.distance < 1) {
+            interaction.distance = 1
+        }
+    })
+    return itemInteractions
+}
 /* [WORKING] Save a user's expo push token in the database
 */
 export const subscribeNotifications = async (userID: string, token: string | null) => {
