@@ -1,7 +1,7 @@
 import * as geofire from "geofire-common"
 import { knex, Knex } from "knex"
 import postgis from "knex-postgis"
-import { ItemData, ItemFilter, UserData, validateItem, ItemFilterKey, getItemKeywords, DefaultItemData, DefaultItemFilter, ItemInfo, itemPercentIncrease, itemDollarIncrease, NotificationData, ItemInteraction } from "./DataTypes";
+import { ItemData, ItemFilter, UserData, validateItem, ItemFilterKey, getItemKeywords, DefaultItemData, DefaultItemFilter, ItemInfo, itemPercentIncrease, itemDollarIncrease, NotificationData, ItemInteraction, OfferData, OfferInfo } from "./DataTypes";
 import * as uuid from "uuid"
 import dotenv from 'dotenv'
 import pg from 'pg'
@@ -19,7 +19,7 @@ type UserInteractsItem = {
 // IMPORTANT! Always use "double quotes" when using any raw query
 
 /*  [WORKING] -> Function has recently been tested and shown to work
-    [NEEDS CHECK] -> Function hasn't changed through multiple updates to code and needs to be tested
+    [NEEDS TESTING] -> Function hasn't changed through multiple updates to code and needs to be tested
     [BROKEN] -> Functions needs to be fixed or removed
  */
 
@@ -113,7 +113,7 @@ const updateViewTimes = async (userID: string, items: ItemData[]) => {
 /*
     IMPORTANT: Update getLikedItems when you update this
 */
-const getItemsWithInfo = async (userID: string, itemQuery: Knex.QueryBuilder) => {
+const getItemsWithInfo = async (userID: string, itemQuery: Knex.QueryBuilder | Knex.Raw, disableView?: boolean) => {
     // Join with UserInteractsItem to get the last time this user viewed and liked the items (get ItemInfo)
     let query = POOL.raw(`
     SELECT i.*, uit."viewTime", uit."likeTime", uit."favTime", uit."likePrice"
@@ -142,7 +142,9 @@ const getItemsWithInfo = async (userID: string, itemQuery: Knex.QueryBuilder) =>
             distance: distance
         }
     }) as ItemInfo[]
-    await updateViewTimes(userID, itemInfos.map(({item}) => item))
+    if (!disableView) {
+        await updateViewTimes(userID, itemInfos.map(({item}) => item))
+    }
     return itemInfos
 }
 
@@ -507,6 +509,219 @@ export const getItemLikes = async (userID: string, itemID: string) => {
     })
     return itemInteractions
 }
+// [NEEDS TESTING] Gets an offer by its ID
+export const getOffersWithIDs = async (userID: string, offerIDs: string[]) => {
+    // Make a transaction for entire query
+    const results = await POOL.transaction(async trx => {
+        return await Promise.all(offerIDs.map(async (offerID) => {
+            const offerData = (await trx('Offer').select('*').where({offerID: offerID}))[0] as OfferData
+            // Get from and to items (with swapped user IDs for item info)
+            const [fromItems, toItems] = await Promise.all([offerData.toID, offerData.fromID].map((userID) => {
+                return getItemsWithInfo(
+                    userID,
+                    trx.raw(`
+                    SELECT i.* FROM
+                    "Item" AS i
+                    LEFT JOIN "ItemInOffer" AS tio
+                        ON i."itemID" = tio."itemID"
+                        AND tio."offerID" = '${offerID}'
+                    `),
+                    true
+                )
+            }))
+            return {
+                offer: offerData,
+                fromItems: fromItems,
+                toItems: toItems
+            } as OfferInfo
+        }))
+    })
+    for (const {offer} of results) {
+        if (offer.fromID !== userID && offer.toID !== userID) {
+            throw new Error(`User with ID '${userID}' tried to access offer they are not part of.`)
+        }
+    }
+    return results
+}
+// [NEEDS TESTING] Gets an offer by its ID
+export const getOffersWithUser = async (userID: string) => {
+    return await POOL.transaction(async (trx) => {
+        const offers = (await trx('Offer').select('*').where({fromID: userID}).orWhere({toID: userID})) as OfferData[]
+        return await Promise.all(offers.map(async (offerData) => {
+            // Get from and to items (with swapped user IDs for item info)
+            const [fromItems, toItems] = await Promise.all([offerData.toID, offerData.fromID].map((userID) => {
+                return getItemsWithInfo(
+                    userID,
+                    trx.raw(`
+                    SELECT i.* FROM
+                    "Item" AS i
+                    LEFT JOIN "ItemInOffer" AS tio
+                        ON tio."offerID" = '${offerData.offerID}'
+                        AND i."itemID" = tio."itemID"
+                    `),
+                    true
+                )
+            }))
+            return {
+                offer: offerData,
+                fromItems: fromItems,
+                toItems: toItems
+            } as OfferInfo
+        }))
+    })
+}
+// [NEEDS TESTING] Gets offers that include an item
+export const getOffersWithItem = async (userID: string, itemID: string) => {
+    const itemInfo = (await getItemsFromIDs(userID, [itemID]))[0]
+    if (itemInfo.item.userID !== userID) {
+        throw new Error(`Tried to retrieve offers for unowned item`)
+    }
+    return await POOL.transaction(async (trx) => {
+        // Get offers that include item
+        const offers = (await trx.raw(`
+        SELECT o.* FROM
+        "Offer" AS o
+        LEFT JOIN "ItemInOffer" AS tio
+            ON tio."itemID" = '${itemID}'
+            AND o."offerID" = tio."offerID"
+        `)).rows as OfferData[]
+        // Get full offer info
+        return await Promise.all(offers.map(async (offerData) => {
+            // Get from and to items (with swapped user IDs for item info)
+            const [fromItems, toItems] = await Promise.all([offerData.toID, offerData.fromID].map((userID) => {
+                return getItemsWithInfo(
+                    userID,
+                    trx.raw(`
+                    SELECT i.* FROM
+                    "Item" AS i
+                    LEFT JOIN "ItemInOffer" AS tio
+                        ON i."itemID" = tio."itemID"
+                        AND tio."offerID" = '${offerData.offerID}'
+                    `),
+                    true
+                )
+            }))
+            return {
+                offer: offerData,
+                fromItems: fromItems,
+                toItems: toItems
+            } as OfferInfo
+        }))
+    })
+}
+// [NEEDS TESTING] Sends an offer from a seller to a buyer
+export const sendOffer = async (userID: string, offer: OfferData, fromItemIDs: string[], toItemIDs: string[], JWTToken: string) => {
+    /*
+        ADD THIS IN PRODUCTION
+
+    if (offer.fromID === offer.toID) {
+        throw new Error(`'From' ID and 'to' ID are the same.`)
+    }
+    */
+    // Check if user calling this function matches user in offer
+    if (userID !== offer.fromID) {
+        throw new Error(`User ID and offer's 'fromID' don't match.`)
+    }
+    // Should check for duplicate IDs in items as well
+    // ...
+    // Get all items listed in offer
+    const [fromItems, toItems] = await Promise.all([
+        getItemsFromIDs(userID, fromItemIDs),
+        getItemsFromIDs(userID, toItemIDs)
+    ])
+    // Check to make sure that all items in the offer correspond to the two users
+    for (const itemInfo of fromItems) {
+        if (itemInfo.item.userID !== userID) {
+            throw new Error(`Not all (from) items in offer match user ID`)
+        }
+    }
+    for (const itemInfo of toItems) {
+        if (itemInfo.item.userID !== offer.toID) {
+            throw new Error(`Not all (to) items in offer match user ID`)
+        }
+    }
+    // Check payments
+    if (offer.fromPayment < 0 || offer.toPayment < 0) {
+        throw new Error(`A payment value is less than 0.`)
+    }
+    // Ensure certain initial values are correct
+    const newOffer: OfferData = {
+        ...offer,
+        fromID: userID,
+        offerID: uuid.v4(),
+        offerTime: Date.now(),
+        responseType: null,
+        responseTime: null,
+        counterOfferID: null,
+        exchangeID: null
+    }
+    // Make sure there isn't a payment both ways
+    if (newOffer.fromPayment && newOffer.toPayment) {
+        if (newOffer.fromPayment >= newOffer.toPayment) {
+            newOffer.fromPayment -= newOffer.toPayment
+            newOffer.toPayment = 0
+        } else {
+            newOffer.toPayment -= newOffer.fromPayment
+            newOffer.fromPayment = 0
+        }
+    }
+    const users = (await POOL('User').select('*').whereIn('userID', [newOffer.fromID, newOffer.toID])) as UserData[]
+    /*
+        REMOVE THIS IN PRODUCTION
+    */
+    if (users.length === 1) {
+        users.push(users[0])
+    }
+    // Add names
+    if (users[0].userID === newOffer.fromID) {
+        newOffer.fromName = users[0].name
+        newOffer.toName = users[1].name
+    } else {
+        newOffer.toName = users[0].name
+        newOffer.fromName = users[1].name
+    }
+    const itemsInOffer = fromItemIDs.concat(toItemIDs)
+    await POOL.transaction(async (trx) => {
+        await Promise.all([
+            trx('Offer').insert(newOffer),
+            trx('ItemInOffer').insert(itemsInOffer.map((itemID) => ({
+                offerID: newOffer.offerID,
+                itemID: itemID
+            })))
+        ])
+    })
+    await sendNotifications(JWTToken, [{
+        message: `A seller has made you an offer on an item you liked!`,
+        userID: offer.toID
+    }])
+}
+// [NEEDS TESTING] Sends an offer from a seller to a buyer
+export const rejectOffer = async (userID: string, offerID: string, JWTToken: string) => {
+    // Get offer
+    const offerInfo = (await getOffersWithIDs(userID, [offerID]))[0]
+    if (![offerInfo.offer.fromID, offerInfo.offer.toID].includes(userID)) {
+        throw new Error(`Tried to reject / cancel offer that user is not part of.`)
+    } else if (offerInfo.offer.responseType === 'accepted') {
+        throw new Error(`Tried to reject / cancel offer when it has already been accepted.`)
+    }
+    // Update offer
+    await POOL('Offer').update({
+        responseType: 'rejected',
+        responseTime: Date.now()
+    }).where({offerID: offerID})
+    // Send notification
+    if (offerInfo.offer.fromID === userID) {
+        await sendNotifications(JWTToken, [{
+            message: `An offer that was sent to you was cancelled.`,
+            userID: offerInfo.offer.toID
+        }])
+    } else {
+        await sendNotifications(JWTToken, [{
+            message: `An offer you sent was rejected.`,
+            userID: offerInfo.offer.fromID
+        }])
+    }
+}
 /* [WORKING] Save a user's expo push token in the database
 */
 export const subscribeNotifications = async (userID: string, token: string | null) => {
@@ -533,5 +748,6 @@ const sendNotifications = async (JWTToken: string, notifs: NotificationData[]) =
             JWTToken: JWTToken
         })
     })
-    await new Promise(r => setTimeout(r, 10));
+    // Wait 5 milliseconds
+    await new Promise(r => setTimeout(r, 5));
 }

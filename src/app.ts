@@ -40,7 +40,7 @@ app.post('/*', async (req, res, next) => {
   try {
     req.body.userID = await verifyUser(req.body.JWTToken)
     const url = req.url.substring(1)
-    if (functions.POST[url]) {
+    if (functions.POST.hasOwnProperty(url)) {
       const result = await functions.POST[url](req.body)
       res.status(200).json(result)
     } else {

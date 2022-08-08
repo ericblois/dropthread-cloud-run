@@ -273,6 +273,7 @@ export type DeliveryMethod = (typeof DeliveryMethods)[number] | ""
 export type ItemData = {
   userID: string,
   itemID: string,
+  offerIDs: string[],
   name: string,
   description: string,
   minPrice: number,
@@ -298,6 +299,7 @@ export type ItemData = {
 export const DefaultItemData: Readonly<ItemData> = {
   userID: "",
   itemID: "",
+  offerIDs: [],
   name: "",
   description: "",
   minPrice: 0,
@@ -358,4 +360,41 @@ export type ItemInteraction = {
   likeTime: number,
   favTime: number,
   likePrice: number
+}
+
+export type OfferResponse = 'accepted' | 'rejected'
+
+export type OfferData = {
+  offerID: string,
+  fromID: string,
+  toID: string,
+  fromName: string,
+  toName: string,
+  fromPayment: number,
+  toPayment: number,
+  offerTime: number,
+  responseType: OfferResponse | null,
+  responseTime: number | null,
+  counterOfferID: string | null,
+  exchangeID: string | null
+}
+
+export type OfferInfo = {
+  offer: OfferData,
+  fromItems: ItemInfo[],
+  toItems: ItemInfo[]
+}
+
+export type ExchangeData = {
+  exchangeID: string,
+  userID1: string,
+  userID2: string,
+  offerID: string,
+  deliveryLat: number | null,
+  deliveryLong: number | null,
+  deliveryAddress: string | null,
+  deliveryPlannedTime: number | null,
+  deliveryActualTime: number | null,
+  stripePaymentID: string | null,
+  cancelled: boolean
 }

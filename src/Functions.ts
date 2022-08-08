@@ -1,5 +1,5 @@
 import * as SQL from "./CloudSQLFunctions"
-import { Coords, ItemData, ItemFilter, UserData } from "./DataTypes";
+import { Coords, ItemData, ItemFilter, OfferData, UserData } from "./DataTypes";
 
 export const functions = {
     GET: {},
@@ -91,6 +91,39 @@ export const functions = {
             token: string | null
         }) => {
             await SQL.subscribeNotifications(data.userID, data.token)
+        },
+        getOffersWithIDs: async (data: {
+            userID: string,
+            offerIDs: string[]
+        }) => {
+            return await SQL.getOffersWithIDs(data.userID, data.offerIDs)
+        },
+        getOffersWithUser: async (data: {
+            userID: string
+        }) => {
+            return await SQL.getOffersWithUser(data.userID)
+        },
+        getOffersWithItem: async (data: {
+            userID: string,
+            itemID: string
+        }) => {
+            return await SQL.getOffersWithItem(data.userID, data.itemID)
+        },
+        sendOffer: async (data: {
+            userID: string,
+            offerData: OfferData,
+            fromItemIDs: string[],
+            toItemIDs: string[],
+            JWTToken: string
+        }) => {
+            await SQL.sendOffer(data.userID, data.offerData, data.fromItemIDs, data.toItemIDs, data.JWTToken)
+        },
+        rejectOffer: async (data: {
+            userID: string,
+            offerID: string,
+            JWTToken: string
+        }) => {
+            await SQL.rejectOffer(data.userID, data.offerID, data.JWTToken)
         }
     }
 
